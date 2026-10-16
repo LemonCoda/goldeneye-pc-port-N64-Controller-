@@ -111,7 +111,8 @@ int  inputMenuPointerLive(void);
 
 /* Re-enumerate gamepads after a hotplug (SDL_CONTROLLERDEVICEADDED/REMOVED). */
 void inputRescanPads(void);
-int  inputPadFamily(int seat);                               /* D471: 0 Xbox, 1 PS, 2 Nintendo */
+int  inputPadFamily(int seat);                               /* 0 Xbox, 1 PS, 2 Nintendo, 3 NSO N64 */
+int  inputPadIsNsoN64(int seat);                             /* automatic original controls, per physical seat */
 void inputPadHelpFmt(char *out, size_t n, const char *tmpl); /* D471: {A}{B}{X}{Y}{BACK}{START} */
 void inputPadHelpFmtFam(char *out, size_t n, const char *tmpl, int fam);
 const char *inputPadSourceFamilyName(int seat, const char *src);   /* D471: NULL = keep Xbox text */

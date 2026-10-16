@@ -1423,6 +1423,15 @@ static void overlayInit(void)
 static int rowSchemeOk(const struct Row *r)
 {
     if (!strcmp(r->key, "__UpdateOpen")) return updateCheckAvailable() != NULL;   /* D551 */
+    /* An NSO N64 pad always uses its physical N64 layout, independently of
+     * other players' modern pads and the saved global control setting. */
+    if (inputPadIsNsoN64(s_padSeat)) {
+        if (!strcmp(r->key, "Input.ControlScheme")) return 0;
+        if (!strncmp(r->key, "Input.PadLook", 13) ||
+            !strcmp(r->key, "Input.PadDeadzoneR") ||
+            !strcmp(r->key, "Input.PadSouthpaw")) return 0;
+        if (r->schemeOnly) return r->schemeOnly == 2;
+    }
     if (!r->schemeOnly || !r->schemePtr) return 1;
     return (*r->schemePtr != 0) == (r->schemeOnly == 2);
 }
@@ -3884,7 +3893,8 @@ void optionsRowTitle(int i, char *out, int n)
     struct Row *r = rowAt(i);
     if (!r || n <= 0) { if (n > 0) out[0] = 0; return; }
     if (!strcmp(r->key, "__HdrController"))
-        snprintf(out, n, "PLAYER %d %s", s_padSeat + 1, r->label);
+        snprintf(out, n, "PLAYER %d %s", s_padSeat + 1,
+                 inputPadIsNsoN64(s_padSeat) ? "N64 CONTROLLER" : r->label);
     else if (!strcmp(r->key, "__HdrSelPlayerC"))
         snprintf(out, n, "SELECT PLAYER");
     else

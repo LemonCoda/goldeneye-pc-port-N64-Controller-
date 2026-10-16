@@ -23,6 +23,7 @@
  * src/sched.h (it is on the include path), not MinGW's. osYieldThread uses a
  * short sleep instead of sched_yield(). */
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -917,7 +918,7 @@ static void piServiceDma(s32 direction, u32 srcPA, void *dstVA, u32 size)
             }
 #if defined(PLATFORM_WINDOWS)
             {
-                PVOID tlow = NULL, thigh = NULL;
+                ULONG_PTR tlow = 0, thigh = 0;
                 GetCurrentThreadStackLimits(&tlow, &thigh);
                 sysLogPrintf(LOG_ERROR,
                              "D60 thread stack: %p..%p  dst-in-stack=%d\n",

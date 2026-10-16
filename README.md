@@ -1,5 +1,18 @@
 # GoldenEye 007 PC Port
 
+## Nintendo Switch Online N64 controller fork
+
+This fork adds automatic support for Nintendo's **Nintendo 64 wireless
+controller for Nintendo Switch Online**, including Windows 11 over Bluetooth.
+It passes the physical N64 buttons and stick to the original game, uses the
+Capture button for PC options, and preserves each player's original control
+style. No external button mapper is needed. Use a build from this fork;
+the upstream release links below do not include this change.
+
+See [controller setup and testing](docs/nso-n64-controller.md).
+Automated input tests pass; physical Bluetooth, rumble and gameplay testing
+are still required before treating this as a hardware-verified release.
+
 [![CI](https://github.com/jkdansereau/goldeneye-pc-port/actions/workflows/ci.yml/badge.svg)](https://github.com/jkdansereau/goldeneye-pc-port/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/jkdansereau/goldeneye-pc-port?include_prereleases&label=download)](https://github.com/jkdansereau/goldeneye-pc-port/releases)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Steam%20Deck-blue)
