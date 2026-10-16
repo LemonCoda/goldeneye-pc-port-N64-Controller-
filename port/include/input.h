@@ -113,6 +113,7 @@ int  inputMenuPointerLive(void);
 void inputRescanPads(void);
 int  inputPadFamily(int seat);                               /* 0 Xbox, 1 PS, 2 Nintendo, 3 NSO N64 */
 int  inputPadIsNsoN64(int seat);                             /* automatic original controls, per physical seat */
+int  inputUsesNsoN64Layout(void);                            /* any active player slot, including a disconnected N64 seat */
 void inputPadHelpFmt(char *out, size_t n, const char *tmpl); /* D471: {A}{B}{X}{Y}{BACK}{START} */
 void inputPadHelpFmtFam(char *out, size_t n, const char *tmpl, int fam);
 const char *inputPadSourceFamilyName(int seat, const char *src);   /* D471: NULL = keep Xbox text */

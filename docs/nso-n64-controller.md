@@ -44,8 +44,10 @@ and Start or Capture to close. SDL's X alias (physical C-left) also selects.
 
 The controller page shows the game's original layouts for this device.
 Modern action rebinding and twin-stick presets do not apply to this physical
-N64 layout; their settings are hidden. Use the game's own Look Up/Down option
-for the original stick direction. Rumble uses the existing SDL Rumble Pak path when the driver
+N64 layout; their settings are hidden. Use the game's own **Look up/down**
+option for stick direction: **Reverse** and **Upright** are both honored.
+The port leaves this setting unchanged while an N64 layout is in use,
+including during a controller disconnect. Rumble uses the existing SDL Rumble Pak path when the driver
 reports support; it still needs a real Bluetooth hardware test.
 
 ## Why a dedicated mapping is needed
@@ -75,12 +77,28 @@ all 16,384 combinations of the original buttons, held input, complete release,
 Capture isolation, trigger boundaries, device identity, and reconnects.
 They verify the SDL adapter, not the Bluetooth transport or physical rumble.
 
+The watch-option regression links the actual Windows engine objects without
+starting the game or using a ROM. Configure a full x86-64 MinGW Makefiles game
+build with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, build it, and place `SDL2.dll`
+in that build directory. Then run:
+
+```sh
+python tools_pc/nso_n64_tests/run_look_policy_windows.py build-nso-n64
+```
+
+It checks both look directions over repeated policy ticks, mixed controllers,
+keyboard/player routing, disconnect/reconnect, replacement by a modern pad,
+and the inactive-stage guards. Generated test files stay inside the build
+directory; the game executable and saves are unchanged.
+
 ## Physical checks still needed
 
 - Detect the controller when paired before launch and when connected later.
 - Verify every button, stick centering, full travel, and diagonal movement.
 - Test 1.1 Honey and 1.2 Solitaire, then confirm a selected style survives
   opening the watch, closing PC options, and returning to a level.
+- Select Look up/down: Upright and Reverse in the watch, verify the pitch
+  direction, then close/reopen the watch and reload the save.
 - Hold and combine C-buttons; C-right must never open PC options. Test
   Z fire, R aim, A weapon cycling, A+Z reverse cycling, and B use/reload.
 - Verify aiming, crouching, sniper zoom, tank entry/exit, and rumble.

@@ -777,6 +777,18 @@ static int slotUsesNsoN64Layout(int idx)
     return padFamily[padSeatForSlot(idx)] == PADFAM_N64;
 }
 
+int inputUsesNsoN64Layout(void)
+{
+    /* The game's Look up/down option is shared, not per player. Check all
+     * active slots so a modern pad in another seat cannot reset it while
+     * an N64 player is using the game's own pitch controls. */
+    int count = getPlayerCount();
+    if (count < 1) count = 1;
+    for (int idx = 0; idx < count && idx < MAX_PADS; ++idx)
+        if (slotUsesNsoN64Layout(idx)) return 1;
+    return 0;
+}
+
 static int mouseEnabled   = 1;
 static int mouseGrabbed    = 1;     /* released while the window is unfocused */
 
