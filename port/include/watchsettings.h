@@ -30,6 +30,7 @@ int watchSettingsRead(enum WatchSettingField field); /* front: saved file, F10: 
 void watchSettingsSet(enum WatchSettingField field, int value, int commit);
 void watchSettingsCommit(enum WatchSettingField field); /* slider release */
 void watchSettingsGameTick(void);             /* game thread; after gfxFrameMsgQ receive */
+void watchSettingsApplyLookPolicy(void);      /* game thread; preserve native N64 Reverse/Upright */
 
 /* D356: context-aware, READ-ONLY active-file accessor (never mutates the
  * stored front target): in stage -> the stage's active file; front

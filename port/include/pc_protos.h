@@ -59,7 +59,6 @@ unsigned short ntohs(unsigned short);
 unsigned long ntohl(unsigned long);
 #endif
 
-int GetCurrentThreadStackLimits();
 int _Printf();
 s32 __scSchedule();
 s32 __scTaskComplete();

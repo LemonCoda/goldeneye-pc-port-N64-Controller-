@@ -723,6 +723,9 @@ covers D24–D69; the log continues in §H (D32 procedure, D70–D121).
 | D570 | **Scaled crosshair (Crosshair size != 100%) showed a faint copy of the top bar's tip under the bottom bar (WRAP tile flags)** — full `## D570` entry at file tail | FIXED 2026-10-06 (port only: CLAMP when scaled in `gunDrawSight` + F10 pointer; 100% unchanged, Dam gate PASS) |
 | D571 | **Project icon restyled to the in-game sight red as pixel art (exe, window, favicon)** — full `## D571` entry at file tail | CHANGED 2026-10-06 (maintainer request; make_icon.py; social preview unchanged) |
 | D572 | **Linux tarball glibc floor lowered from 2.38 to 2.31: CI builds in the Steam Runtime sniper container with SDL2 2.30.0 from source** — full `## D572` entry at file tail | CHANGED 2026-10-07 (maintainer request; packaging only; X220 glibc 2.36 fresh install PASS) |
+| D573 | **Nintendo Switch Online N64 controller: automatic original layout, independent C-buttons, Capture for PC options** — full `## D573` entry at file tail | PARTIAL 2026-10-16 (Windows build and SDL virtual-input tests pass; Bluetooth hardware/gameplay pass owed) |
+| D574 | **Windows build: correct stack-limit API declaration and explicit standard-library includes** — full `## D574` entry at file tail | FIXED 2026-10-16 (MinGW GCC 16.2 compile/link and executable version smoke test pass) |
+| D575 | **NSO N64 watch menu could not retain Look up/down: Upright because the modern-input policy forced Reverse every tick** — full `## D575` entry at file tail | FIXED 2026-10-16 (native layouts preserve both choices; engine-linked regression passes; interactive recheck owed) |
 | D407 | **Tanks cannot be boarded/exited on PC — the v0.4.0 use/reload split (D378/D393) removed the B-button tap the engine's tank handlers in `bondview2.c` consume (user report 2026-09-28, Runway/Streets)** — full `## D407` entry at file tail | **CLOSED (2026-09-28 bookkeeping: tank board/exit accepted by the user; shipped in v0.4.0).** Earlier: PARTIAL (fix landed in v0.4.0, port-only): present `GE_CONT_B` on the use (E / pad A) rising edge only while `g_PlayerIsInTank == 1` or `g_BondCanEnterTank != 0`; E keeps its D378 no-reload-fallback semantics elsewhere, N64 layout unaffected. D407(b) same cycle: front PC Options page-edge highlight clamp + mouse-wheel / W-S paging (wheel queue consumed on the menu, D223); its wheel mapping shipped inverted and was fixed to match W/S (wheel up = step up). D407(c): board-animation lockout, menu-accept B gate in tank states, in-tank aim routed through the legacy velocity stick + `Input.TankAimScale` knob. RESOLVED 2026-09-28: all port-only (src/game zero-diff), 10 TANKDBG probes stripped, release binary verified clean, user live tank drive signed off (board + exit OK, aim feel good). |
 | D408 | **`Game.SkipIntro` skips the post-mission failure dossier: with it on, entering a level then aborting (watch Z+A) or dying (KIA) returns straight to the menus — no REPORT / "Mission status: KILLED IN ACTION / ABORTED" screen** (user report 2026-09-28; save/AllUnlocked ruled out) — full `## D408` entry at file tail | FIXED 2026-09-30 (SkipIntro hook gated to first boot; live dossier check owed). |
 | D415 | **Shooting a light fixture does not "kill" its flickering light (Bunker, Caverns): the fixture takes the hit but the flicker keeps going (community report, issue #87 comment by the reporter, 2026-09-28, 00 Agent playthrough of v0.4.0).** — full `## D415` entry at file tail | FIXED (2026-09-29 bookkeeping: root-caused and fixed as D430 + D431, user-verified vs GEPD/1964 on Caverns 2026-09-29; #119). Earlier: ROOT-CAUSED as D430 (see there); fix in tree, live check owed. |
@@ -18417,3 +18420,97 @@ CI-built tarball (run 37623073542, c45dece7, the v0.5.0 packaging): floor
 X220 (Fedora 37, glibc 2.36: the box the 24.04 tarball refused to start on) and
 the Steam Deck; the 21-level pixel gate ran on that binary on both, 21/21 PASS
 each. Shipped in v0.5.0.
+
+## D573: Nintendo Switch Online N64 controller native layout (2026-10-16)
+
+**Status: PARTIAL.** Implemented in the port layer; Windows x86-64 builds and
+ROM-free SDL virtual-controller tests pass. Real Windows 11 Bluetooth,
+rumble, gameplay and mixed-controller split-screen checks remain in
+`docs/ROADMAP.md`; the procedure is in `docs/nso-n64-controller.md`.
+
+SDL2 identifies this device with Nintendo VID/PID `057e:2019`, often with
+controller type UNKNOWN. Its normalised mapping assigns C-left/up/right to
+X/Y/Back, C-down to the right trigger, and Z to the left trigger. The modern
+action table therefore misroutes original buttons, C-right opens PC options,
+and the default natural-look layout expects a second stick that is absent.
+
+`port/src/nson64.c` enables SDL's Nintendo classic/Switch HIDAPI drivers before
+controller initialisation and translates each original button independently
+to its N64 bit. `input.c` routes the physical stick directly through the
+existing left-stick deadzone and preserves held inputs (including opposing
+C-buttons and A+Z). It bypasses modern action bindings and forced control-style
+writes only for the N64 seat, leaving the game's saved 1.x/2.x choice intact.
+The last N64 seat identity survives a Bluetooth disconnect until a replacement
+pad is opened, so an idle poll cannot overwrite the chosen style. Existing
+dual-controller 2.x limitations are unchanged.
+
+Capture is the PC-options button; Home and ZR produce no original game input.
+The options close path uses the same translation. Overlay ownership and button
+edges use physical seats, including keyboard/mouse-P1 routing. The controller
+page shows original game styles and hides modern presets, remapping and
+right-stick settings for this device. Rumble uses the existing D401 SDL path.
+No changes to game logic or the N64 build.
+
+**References checked:** SDL2's `SDL_gamecontroller.c` N64 mapping and
+`SDL_hidapi_switch.c` device/packet handling; libretro's SDL2 Nintendo N64
+controller profile; the Perfect Dark port's input HIDAPI/rumble setup. The
+adapter and tests are original code; no third-party implementation is vendored.
+
+**Verification:** `tools_pc/nso_n64_tests` uses SDL 2.32.10's virtual joystick
+API and checks all 16,384 combinations of the 14 original digital controls,
+repeated held reads, full release, Capture isolation, trigger boundaries,
+wrong VID/PID rejection and detach/reconnect identity. The test recreates the
+SDL HIDAPI mapping; it does not exercise Bluetooth packets or physical rumble.
+The complete Windows game compiles and links with portable MinGW GCC 16.2.0,
+CMake 4.4.4, SDL 2.32.10 and zlib 1.3.2. `--version` exits successfully without
+a ROM. In-game testing requires the user's ROM and controller.
+
+## D574: Windows compiler compatibility in port headers (2026-10-16)
+
+**Status: FIXED.** The native Windows build exposed a conflicting implicit-int
+declaration of `GetCurrentThreadStackLimits` in `pc_protos.h`, an incorrect
+return type/calling convention in `crash.c`, and missing explicit includes for
+`FILE`/`fopen` in `libultra.c` and `strstr` in `gfx_sdl2.cpp`.
+
+The stack-limit API returns `VOID` and fills two `ULONG_PTR` values (Windows 8+).
+Use its proper `WINAPI` declaration for older MinGW headers that hide it, remove
+the generic implicit-int declaration, and test the returned bounds instead of
+a nonexistent success value. Both the crash unwinder and DMA diagnostic pass
+the correct pointer types. Add the standard C headers at their first use.
+
+Verified by a complete Windows x86-64 compile/link and `--version` exit 0.
+These changes are confined to the port layer and add no Windows dependency
+that the existing direct API calls did not already require.
+
+## D575: Native N64 Look up/down could not retain Upright (2026-10-16)
+
+**Report:** the NSO N64 layout works in a user playtest, but selecting Upright
+in the game's watch settings does not stick.
+
+**Cause:** D564's `watchSettingsGameTick` unconditionally reset the game's
+pitch option to 0 (Reverse) every active tick. The watch successfully writes
+1 (Upright) to `game_options_entries[PLAYER_OPTION_LOOK].current_value`, but
+the port overwrites it immediately. `bondview2.c` reads this same option for
+native stick/C-button pitch; the native adapter does not use the port's
+separate Invert look setting. This override was missed in D573.
+
+**Fix (port only):** `watchSettingsApplyLookPolicy`, called from the same game
+tick, preserves the option whenever an active player slot uses the NSO N64
+layout. `inputUsesNsoN64Layout` checks the existing slot-to-seat routing and
+retained N64 identity, including keyboard/mouse P1 and disconnected seats.
+The option is a shared game setting, so checking only `g_CurrentPlayer` would
+let another player's modern controller reset it. Modern-only sessions retain
+D564's existing policy. The original watch navigation and save logic are
+unchanged; no game-source edits.
+
+**Verification:** complete Windows compile/link; all 16,384 button combinations
+still pass. The ROM-free `test_look_policy.c` links the real engine objects and
+uses SDL virtual controllers, the real game option getters/setters and the
+production policy. It verifies Upright -> Reverse -> Upright across 120 policy
+ticks per selection, solo N64, keyboard P1/N64 P2, mixed controllers with the
+modern player current, disconnect/reconnect, replacement by a modern pad,
+and inactive-stage/no-player guards. Restoring the old unconditional override
+in an isolated test object makes the same test fail on its first native
+Upright check. No simulated game logic or ROM is needed. The interactive watch
+selection, pitch feel and save/reload check remain part of the hardware pass
+in `docs/ROADMAP.md`.

@@ -12,6 +12,7 @@
 #include "options.h"
 #include "player.h"
 #include "system.h"
+#include "input.h"
 #include "watchsettings.h"
 #include "optionsoverlay.h"   /* D356 GE_WSPROBE_RESET probe hooks */
 
@@ -559,6 +560,17 @@ static int migrateUntouchedLookAhead(int folder)
 }
 static int wsLookAheadChecked = 0;   /* once per stage activation */
 
+void watchSettingsApplyLookPolicy(void)
+{
+    /* D564: modern inputs use the port's Invert look controls, so pin the
+     * game's pitch flag to its factory value for those layouts. D575: native
+     * N64 input uses the game's Reverse/Upright option; never overwrite it
+     * while an N64 player is active (including a Bluetooth disconnect). */
+    if (stageActive() && g_CurrentPlayer && !inputUsesNsoN64Layout() &&
+        get_cur_player_look_vertical_inverted() != 0)
+        set_cur_player_look_vertical_inverted(0);
+}
+
 void watchSettingsGameTick(void)
 {
     /* Drain F10 front-end commits on the game thread. This MUST run before
@@ -623,13 +635,7 @@ void watchSettingsGameTick(void)
      * during a level/menu transition. Each command's folder is re-checked
      * against selected_folder_num at apply time, so a stale cross-file edit
      * is still dropped, never misapplied. */
-    /* D564: the game's own "Look up/down" option is not exposed (the port's
-     * Mouse / Controller "Invert look" rows are the inversion controls). Pin it
-     * to its factory value (0, as a blank profile has it) so a value saved by an
-     * older build or set via the in-game watch menu cannot silently flip the
-     * pad stick on the game's pitch path. RAM only; one int compare per tick. */
-    if (stageActive() && g_CurrentPlayer && get_cur_player_look_vertical_inverted() != 0)
-        set_cur_player_look_vertical_inverted(0);
+    watchSettingsApplyLookPolicy();
 
     if (!stageActive() || !g_CurrentPlayer) {
         wsStageWasActive = 0;

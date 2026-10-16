@@ -80,6 +80,7 @@
 #include "system.h"
 #include "config.h"
 #include "input.h"
+#include "nson64.h"
 #include "envflag.h"
 #include "optionsoverlay.h"
 #include "video.h"
@@ -361,6 +362,8 @@ static SDL_GameController *slotPad(int idx)
     return pads[idx];
 }
 
+static int slotUsesNsoN64Layout(int idx);
+
 /* D416 per-slot input: the controller poll runs on the scheduler thread, where
  * g_CurrentPlayer is whichever player the game thread last selected -- wrong
  * for a split-screen slot. While a slot is being polled (s_slot >= 0) in a
@@ -546,7 +549,7 @@ static int stickSolitare(int seat) {
  * ignore anyway. */
 static int styleIsSolitare(int seat)
 {
-    if (!controlScheme) return stickSolitare(seat);
+    if (!controlScheme && !slotUsesNsoN64Layout(seat)) return stickSolitare(seat);
     struct player *p = slotPlayer();
     if (!p) return stickSolitare(seat);
     int t = p->cur_player_control_type_0;
@@ -730,15 +733,19 @@ static int padRumbleOn[MAX_PADS];
 
 /* D471: controller family per seat, for button NAMES in the PC menus (no
  * glyphs). Detected once when a pad is seated; 0 = Xbox-style (default,
- * also Steam Deck / unknown), 1 = PlayStation, 2 = Nintendo. SDL's default
+ * also Steam Deck / unknown), 1 = PlayStation, 2 = Nintendo, 3 = NSO N64. SDL's default
  * GAMECONTROLLER_USE_BUTTON_LABELS=1 means BUTTON_A is the button printed
  * "A" on a Nintendo pad, so only shoulders/triggers/Back/Start differ there. */
-enum { PADFAM_XBOX = 0, PADFAM_PS = 1, PADFAM_NINTENDO = 2 };
+enum { PADFAM_XBOX = 0, PADFAM_PS = 1, PADFAM_NINTENDO = 2, PADFAM_N64 = 3 };
 static u8 padFamily[MAX_PADS];
 
 static void padDetectFamily(int seat)
 {
     padFamily[seat] = PADFAM_XBOX;
+    if (nsoN64IsController(pads[seat])) {
+        padFamily[seat] = PADFAM_N64;
+        return;
+    }
 #if SDL_VERSION_ATLEAST(2, 0, 12)
     switch (SDL_GameControllerGetType(pads[seat])) {
     case SDL_CONTROLLER_TYPE_PS3:
@@ -759,6 +766,28 @@ static void padDetectFamily(int seat)
 #endif
 }
 static float gRumbleScale = 0.5f;
+
+static int slotUsesNsoN64Layout(int idx)
+{
+    if (idx < 0 || idx >= MAX_PADS) return 0;
+    if (idx == 0 && inputMpSplit() && inputMpKbmP1()) return 0;
+    /* Keep the last N64 layout while its seat is disconnected, so a
+     * Bluetooth drop cannot overwrite the saved style with a modern one.
+     * Opening a replacement pad runs padDetectFamily and replaces it. */
+    return padFamily[padSeatForSlot(idx)] == PADFAM_N64;
+}
+
+int inputUsesNsoN64Layout(void)
+{
+    /* The game's Look up/down option is shared, not per player. Check all
+     * active slots so a modern pad in another seat cannot reset it while
+     * an N64 player is using the game's own pitch controls. */
+    int count = getPlayerCount();
+    if (count < 1) count = 1;
+    for (int idx = 0; idx < count && idx < MAX_PADS; ++idx)
+        if (slotUsesNsoN64Layout(idx)) return 1;
+    return 0;
+}
 
 static int mouseEnabled   = 1;
 static int mouseGrabbed    = 1;     /* released while the window is unfocused */
@@ -1148,7 +1177,8 @@ static void inputOpenPads(void)
             pads[s] = NULL;
             padInst[s] = -1;
             padRumbleOn[s] = 0;
-            padFamily[s] = PADFAM_XBOX;
+            if (padFamily[s] != PADFAM_N64) padFamily[s] = PADFAM_XBOX;
+            padSelectPrev[s] = 0;
             if (inMatch) s_seatCompactOwed = 1;
         }
     }
@@ -1163,6 +1193,7 @@ static void inputOpenPads(void)
                 padInst[d] = padInst[s];     padInst[s] = -1;
                 padRumbleOn[d] = padRumbleOn[s]; padRumbleOn[s] = 0;
                 padFamily[d] = padFamily[s]; padFamily[s] = PADFAM_XBOX;   /* D471 */
+                padSelectPrev[d] = padSelectPrev[s]; padSelectPrev[s] = 0;
                 sysLogPrintf(LOG_NOTE, "input: pad '%s' moved seat %d -> %d",
                              SDL_GameControllerName(pads[d]), s, d);
             }
@@ -1536,6 +1567,7 @@ static int crouchMode = 1;   /* 0 = hold, 1 = toggle (latched crouch input); D55
 static void padMapSelfTest(void);
 int inputInit(void)
 {
+    nsoN64InitHints();
     if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER)) {
         if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
             sysLogPrintf(LOG_WARNING, "input: SDL_INIT_GAMECONTROLLER failed: %s",
@@ -2116,6 +2148,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
     unsigned button = 0;
     int sx = 0, sy = 0;
     int crouchNow = 0;
+    const int nativeN64 = slotUsesNsoN64Layout(idx);
 
     /* D194/D238: self-correcting every poll -- cheap (plain field writes,
      * see options.c cur_player_set_control_type), and re-asserts itself if
@@ -2124,7 +2157,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
         (idx == 0 || idx < getPlayerCount())) {   /* D416: each slot rewrites only its own player's style */
         int wantSolitare = stickSolitare(idx) ? CONTROLLER_CONFIG_SOLITARE_ : CONTROLLER_CONFIG_HONEY_;   /* D498, D518 */
         struct player *sp = slotPlayer();
-        if (controlScheme) {
+        if (controlScheme || nativeN64) {
             /* D513 OG controls: the port never writes the style; the game's own
              * selection (watch / save / MP setup) stands. Log each change once. */
             static int lastStyle[4] = { -1, -1, -1, -1 };
@@ -2163,8 +2196,9 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
 
     /* D472: a non-zero owner pad is swallowed too (neutral) while the overlay
      * is open; pad 0 below still hosts the overlay tick. */
-    if (idx != 0 && optionsOverlayIsOpen() && idx == inputOverlayOwnerPad()) {
-        padActPrev[idx] = pads[idx] ? padActHeld(&padTabGet()->seat[padSeatForSlot(idx)], padReadRaw(pads[idx])) : 0;
+    if (idx != 0 && optionsOverlayIsOpen() && slotPad(idx) &&
+        padSeatForSlot(idx) == inputOverlayOwnerPad()) {
+        padActPrev[idx] = !nativeN64 ? padActHeld(&padTabGet()->seat[padSeatForSlot(idx)], padReadRaw(slotPad(idx))) : 0;
         if (stick_x) *stick_x = 0;
         if (stick_y) *stick_y = 0;
         return 0;
@@ -2173,7 +2207,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
     if (idx == 0 && optionsOverlayIsOpen()) {
         const Uint8 *overlayKs = SDL_GetKeyboardState(NULL);
         /* D469: pad use/reload/edge state follows the bound actions, not fixed A/X/B/Y */
-        u32 ovHeld = pads[0] ? padActHeld(&padTabGet()->seat[0], padReadRaw(pads[0])) : 0;
+        u32 ovHeld = pads[0] && !nsoN64IsController(pads[0]) ? padActHeld(&padTabGet()->seat[0], padReadRaw(pads[0])) : 0;
         s_useHeldPrev = actHeld(overlayKs, IA_CANCEL) || (ovHeld & (1u << PA_USE));
         s_reloadHeldPrev = actHeld(overlayKs, IA_RELOAD) || (ovHeld & (1u << PA_RELOAD));
         s_crouchLatch = 0;
@@ -2187,7 +2221,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
             int own = inputOverlayOwnerPad();
             int closeNow = 0;
             for (int i = 0; i < MAX_PADS; i++) {
-                int selNow = pads[i] ? SDL_GameControllerGetButton(pads[i], SDL_CONTROLLER_BUTTON_BACK) : 0;
+                int selNow = inputPadButton(i, SDL_CONTROLLER_BUTTON_BACK);
                 if (i == own && selNow && !padSelectPrev[i]) closeNow = 1;
                 padSelectPrev[i] = selNow;
             }
@@ -2368,7 +2402,7 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
          * combined edges prevent a held input from repeatedly using a door.
          * In menus/watch/tank the pad keeps native accept/cancel buttons. */
         SDL_GameController *slot0Pad = slotPad(0);
-        u32 slot0Held = slot0Pad ? padActHeld(&padTabGet()->seat[padSeatForSlot(0)], padReadRaw(slot0Pad)) : 0;
+        u32 slot0Held = slot0Pad && !nativeN64 ? padActHeld(&padTabGet()->seat[padSeatForSlot(0)], padReadRaw(slot0Pad)) : 0;
         int padUse = (slot0Held & (1u << PA_USE)) != 0;       /* D469: bound actions (Jinx 1.1: A / X) */
         int padReload = (slot0Held & (1u << PA_RELOAD)) != 0;
         int useNow = scriptIsActive(0) ? scriptSlots[0].use : (actHeld(ks, IA_CANCEL) || padUse);
@@ -2749,124 +2783,139 @@ static unsigned inputComputePadSlot(int idx, signed char *stick_x, signed char *
     /* ---- gamepad ---- */
     SDL_GameController *pad = slotPad(idx);
     if (pad) {
-        int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
-        int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
-        int rx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
-        int ry = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
-
-        /* D282: front-end menus (main menu, file select, mission-select map)
-         * share this same stick_x/stick_y channel with in-game look/movement.
-         * naturalPitchMode (SOLITARE, default-on) routes that channel to the
-         * RIGHT stick for continuous look -- fine in a level, unintuitive in
-         * a menu, where the left stick is the expected primary-navigation
-         * input on a modern pad/Deck (matches the F10 overlay's own
-         * left-stick nav, optionsoverlay.c). Outside a running stage, always
-         * source stick_x/stick_y from the left stick, regardless of
-         * naturalPitchMode -- a menu-context input remap only, no game-logic
-         * change and no effect on in-level control feel. */
-        int padMenuMode = (current_menu != GE_MENU_RUN_STAGE &&
-                           current_menu != GE_MENU_INVALID);
-
-        /* D498: 1.3 Frost / 1.4 Elektra swap the two sticks; menus never swap. */
-        if (!padMenuMode && stickSwap(idx)) { int tx = lx, ty = ly; lx = rx; ly = ry; rx = tx; ry = ty; }   /* D518 */
-
-        if (padMenuMode) {
-            int px = scaleAxis(lx, padDeadzoneL);
-            int py = -scaleAxis(ly, padDeadzoneL);       /* SDL up = negative -> N64 up = positive */
+        if (nativeN64) {
+            /* A real N64 layout passes through for every game/watch style.
+             * Never turn C-buttons into modern actions or a synthetic stick.
+             * Preserve held A+Z (reverse weapon cycling) and B's native
+             * interact/reload/tank behavior; the game owns those decisions. */
+            int px = scaleAxis(SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), padDeadzoneL);
+            int py = -scaleAxis(SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY), padDeadzoneL);
             if (px) sx = px;
             if (py) sy = py;
-        } else if (styleIsSolitare(idx)) {   /* D498, D513, D518 */
-            /* D194/D238: SOLITARE swaps stick roles -- left stick becomes
-             * digital-step movement (same analog-for-movement tradeoff as
-             * the keyboard remap above), right stick becomes continuous
-             * natural look (replacing its old digital-C-button emulation),
-             * matching how the mouse now drives look continuously too. */
-            if (ly < -RSTICK_THRESHOLD) button |= GE_CONT_E;   /* stick up = forward */
-            if (ly >  RSTICK_THRESHOLD) button |= GE_CONT_D;   /* stick down = back  */
-            if (lx < -RSTICK_THRESHOLD) button |= GE_CONT_C;   /* strafe left        */
-            if (lx >  RSTICK_THRESHOLD) button |= GE_CONT_F;   /* strafe right       */
-
-            /* Wave A (v0.5.0): right-stick look -- per-stick deadzone (right),
-             * per-axis sensitivity (% of native, 100 = unchanged, re-clamped to
-             * STICK_MAX), and an optional low-pass. All feel-only, identity at
-             * their defaults (sens 100%, smoothing off). */
-            int rxs = scaleAxis(rx, padDeadzoneR);
-            int rys = -scaleAxis(ry, padDeadzoneR);   /* SDL up = negative -> N64 up = positive */
-            if (padLookSensX != 100 && rxs) rxs = rxs * padLookSensX / 100;
-            if (padLookSensY != 100 && rys) rys = rys * padLookSensY / 100;
-            if (rxs >  STICK_MAX) rxs =  STICK_MAX; else if (rxs < -STICK_MAX) rxs = -STICK_MAX;
-            if (rys >  STICK_MAX) rys =  STICK_MAX; else if (rys < -STICK_MAX) rys = -STICK_MAX;
-            if (idx == 0 && (rxs || rys)) s_aimDevMouse = 0;   /* D337: pad aim active */
-            if (padLookSmooth > 0) {
-                double a = padLookSmooth * 0.09;   /* 10 -> 0.9 (heaviest); 0 = off */
-                padSmSX[idx] = padSmSX[idx] * a + (double)rxs * (1.0 - a);
-                padSmSY[idx] = padSmSY[idx] * a + (double)rys * (1.0 - a);
-                rxs = (int)lround(padSmSX[idx]);
-                rys = (int)lround(padSmSY[idx]);
-            }
-            if (padLookInvertY) rys = -rys;
-            if (aimModeGet() == AIMMODE_CENTRED && padDirectCompute(rxs, rys)) {
-                /* D404 (resolved by implementation, 2026-09-28): pad CENTRED
-                 * aim -- the stick drives the camera directly (crosshair
-                 * pinned at centre), the pad-side twin of the mouse CENTRED
-                 * branch above, so the Aim-style toggle is no longer inert
-                 * on a pad. No look stick is emitted this poll; when
-                 * padDirectCompute declines (dead/watch/pause/cutscene) the
-                 * legacy stick emission below runs, as the mouse branch
-                 * falls back to its legacy path. AIMMODE_N64 keeps today's
-                 * behaviour: the deflection feeds the game's crosshair
-                 * integrator (travel + edge scroll + spring-back -- the
-                 * original controller feel). */
-            } else {
-                if (rxs) sx = rxs;
-                if (rys) sy = rys;
-            }
+            if (idx == 0 && (px || py)) s_aimDevMouse = 0;
+            button |= nsoN64ReadButtons(pad, padTriggerPct * 327);
+            padActPrev[idx] = 0;
         } else {
-            int px = scaleAxis(lx, padDeadzoneL);
-            int py = -scaleAxis(ly, padDeadzoneL);       /* SDL up = negative -> N64 up = positive */
-            if (px) sx = px;
-            if (py) sy = py;
-            if (idx == 0 && (px || py)) s_aimDevMouse = 0;   /* D337: pad aim active */
+            int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
+            int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+            int rx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
+            int ry = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
 
-            if (padLookInvertY) ry = -ry;
-            if (rx >  RSTICK_THRESHOLD) button |= GE_CONT_F;
-            if (rx < -RSTICK_THRESHOLD) button |= GE_CONT_C;
-            if (ry >  RSTICK_THRESHOLD) button |= GE_CONT_D;
-            if (ry < -RSTICK_THRESHOLD) button |= GE_CONT_E;
-        }
+            /* D282: front-end menus (main menu, file select, mission-select map)
+             * share this same stick_x/stick_y channel with in-game look/movement.
+             * naturalPitchMode (SOLITARE, default-on) routes that channel to the
+             * RIGHT stick for continuous look -- fine in a level, unintuitive in
+             * a menu, where the left stick is the expected primary-navigation
+             * input on a modern pad/Deck (matches the F10 overlay's own
+             * left-stick nav, optionsoverlay.c). Outside a running stage, always
+             * source stick_x/stick_y from the left stick, regardless of
+             * naturalPitchMode -- a menu-context input remap only, no game-logic
+             * change and no effect on in-level control feel. */
+            int padMenuMode = (current_menu != GE_MENU_RUN_STAGE &&
+                               current_menu != GE_MENU_INVALID);
 
-        /* D469: triggers/faces/shoulders/Start/D-pad via the data-driven
-         * action table (preset 0 == the pre-D469 mapping: RT fire, LT/LB aim,
-         * A use, X reload, B gadget, Y next weapon, stick clicks crouch,
-         * Start; menus keep native A/X accept + B/Y cancel). Xbox 1.1
-         * Jinx-style; RB's remaster HD toggle is unavailable. */
+            /* D498: 1.3 Frost / 1.4 Elektra swap the two sticks; menus never swap. */
+            if (!padMenuMode && stickSwap(idx)) { int tx = lx, ty = ly; lx = rx; ly = ry; rx = tx; ry = ty; }   /* D518 */
+
+            if (padMenuMode) {
+                int px = scaleAxis(lx, padDeadzoneL);
+                int py = -scaleAxis(ly, padDeadzoneL);       /* SDL up = negative -> N64 up = positive */
+                if (px) sx = px;
+                if (py) sy = py;
+            } else if (styleIsSolitare(idx)) {   /* D498, D513, D518 */
+                /* D194/D238: SOLITARE swaps stick roles -- left stick becomes
+                 * digital-step movement (same analog-for-movement tradeoff as
+                 * the keyboard remap above), right stick becomes continuous
+                 * natural look (replacing its old digital-C-button emulation),
+                 * matching how the mouse now drives look continuously too. */
+                if (ly < -RSTICK_THRESHOLD) button |= GE_CONT_E;   /* stick up = forward */
+                if (ly >  RSTICK_THRESHOLD) button |= GE_CONT_D;   /* stick down = back  */
+                if (lx < -RSTICK_THRESHOLD) button |= GE_CONT_C;   /* strafe left        */
+                if (lx >  RSTICK_THRESHOLD) button |= GE_CONT_F;   /* strafe right       */
+
+                /* Wave A (v0.5.0): right-stick look -- per-stick deadzone (right),
+                 * per-axis sensitivity (% of native, 100 = unchanged, re-clamped to
+                 * STICK_MAX), and an optional low-pass. All feel-only, identity at
+                 * their defaults (sens 100%, smoothing off). */
+                int rxs = scaleAxis(rx, padDeadzoneR);
+                int rys = -scaleAxis(ry, padDeadzoneR);   /* SDL up = negative -> N64 up = positive */
+                if (padLookSensX != 100 && rxs) rxs = rxs * padLookSensX / 100;
+                if (padLookSensY != 100 && rys) rys = rys * padLookSensY / 100;
+                if (rxs >  STICK_MAX) rxs =  STICK_MAX; else if (rxs < -STICK_MAX) rxs = -STICK_MAX;
+                if (rys >  STICK_MAX) rys =  STICK_MAX; else if (rys < -STICK_MAX) rys = -STICK_MAX;
+                if (idx == 0 && (rxs || rys)) s_aimDevMouse = 0;   /* D337: pad aim active */
+                if (padLookSmooth > 0) {
+                    double a = padLookSmooth * 0.09;   /* 10 -> 0.9 (heaviest); 0 = off */
+                    padSmSX[idx] = padSmSX[idx] * a + (double)rxs * (1.0 - a);
+                    padSmSY[idx] = padSmSY[idx] * a + (double)rys * (1.0 - a);
+                    rxs = (int)lround(padSmSX[idx]);
+                    rys = (int)lround(padSmSY[idx]);
+                }
+                if (padLookInvertY) rys = -rys;
+                if (aimModeGet() == AIMMODE_CENTRED && padDirectCompute(rxs, rys)) {
+                    /* D404 (resolved by implementation, 2026-09-28): pad CENTRED
+                     * aim -- the stick drives the camera directly (crosshair
+                     * pinned at centre), the pad-side twin of the mouse CENTRED
+                     * branch above, so the Aim-style toggle is no longer inert
+                     * on a pad. No look stick is emitted this poll; when
+                     * padDirectCompute declines (dead/watch/pause/cutscene) the
+                     * legacy stick emission below runs, as the mouse branch
+                     * falls back to its legacy path. AIMMODE_N64 keeps today's
+                     * behaviour: the deflection feeds the game's crosshair
+                     * integrator (travel + edge scroll + spring-back -- the
+                     * original controller feel). */
+                } else {
+                    if (rxs) sx = rxs;
+                    if (rys) sy = rys;
+                }
+            } else {
+                int px = scaleAxis(lx, padDeadzoneL);
+                int py = -scaleAxis(ly, padDeadzoneL);       /* SDL up = negative -> N64 up = positive */
+                if (px) sx = px;
+                if (py) sy = py;
+                if (idx == 0 && (px || py)) s_aimDevMouse = 0;   /* D337: pad aim active */
+
+                if (padLookInvertY) ry = -ry;
+                if (rx >  RSTICK_THRESHOLD) button |= GE_CONT_F;
+                if (rx < -RSTICK_THRESHOLD) button |= GE_CONT_C;
+                if (ry >  RSTICK_THRESHOLD) button |= GE_CONT_D;
+                if (ry < -RSTICK_THRESHOLD) button |= GE_CONT_E;
+            }
+
+            /* D469: triggers/faces/shoulders/Start/D-pad via the data-driven
+             * action table (preset 0 == the pre-D469 mapping: RT fire, LT/LB aim,
+             * A use, X reload, B gadget, Y next weapon, stick clicks crouch,
+             * Start; menus keep native A/X accept + B/Y cancel). Xbox 1.1
+             * Jinx-style; RB's remaster HD toggle is unavailable. */
+            {
+                PadMapCtx pc;
+                PadMapOut po;
+                pc.facePlayable = (idx == 0 || inputMpSplit()) && inputCanUseGameplayActions(padMenuMode);
+                pc.slotNative = (idx > 0 || inputMpPadsOwnP1());
+                pc.southpaw = padSouthpaw;
+                pc.tank = !pc.facePlayable && idx == 0 && !padMenuMode && g_PlayerIsInTank == 1 &&
+                          slotPlayer() && slotPlayer()->outside_watch_menu && !slotPlayer()->pause_state;
+                const PadBinds *pb = &padTabGet()->seat[padSeatForSlot(idx)];
+                padMapPure(pb, padReadRaw(pad), padActPrev[idx], button, &pc, &po);
+                button = po.button;
+                if (po.crouch) crouchNow = 1;
+                if (po.gadgetEdge) inputCycleGadget();
+                padActPrev[idx] = po.actHeld;
+            }
+        } /* modern controller mapping */
+
+        /* Back opens PC options on modern pads; Capture does so on N64.
+         * Track the physical seat, including when keyboard/mouse is P1. */
         {
-            PadMapCtx pc;
-            PadMapOut po;
-            pc.facePlayable = (idx == 0 || inputMpSplit()) && inputCanUseGameplayActions(padMenuMode);
-            pc.slotNative = (idx > 0 || inputMpPadsOwnP1());
-            pc.southpaw = padSouthpaw;
-            pc.tank = !pc.facePlayable && idx == 0 && !padMenuMode && g_PlayerIsInTank == 1 &&
-                      slotPlayer() && slotPlayer()->outside_watch_menu && !slotPlayer()->pause_state;
-            const PadBinds *pb = &padTabGet()->seat[padSeatForSlot(idx)];
-            padMapPure(pb, padReadRaw(pad), padActPrev[idx], button, &pc, &po);
-            button = po.button;
-            if (po.crouch) crouchNow = 1;
-            if (po.gadgetEdge) inputCycleGadget();
-            padActPrev[idx] = po.actHeld;
-        }
-
-        /* Select (BACK) opens the F10 options overlay -- the gamepad
-         * equivalent of the F10 key for controller-only machines (Steam
-         * Deck). The game never reads BACK, so nothing is withheld. */
-        {
-            int selNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK);
+            int seat = padSeatForSlot(idx);
+            int selNow = nativeN64 ? nsoN64OptionsHeld(pad)
+                                  : SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK);
             /* D472: only opens here (closing is the owner's, in the overlay path) */
-            if (selNow && !padSelectPrev[idx] && !optionsOverlayIsOpen()) {
-                s_ovOwner = idx;
+            if (selNow && !padSelectPrev[seat] && !optionsOverlayIsOpen()) {
+                s_ovOwner = seat;
                 optionsOverlayToggle();
             }
-            padSelectPrev[idx] = selNow;
+            padSelectPrev[seat] = selNow;
         }
     }
 
@@ -3089,13 +3138,14 @@ int inputPadFamily(int seat)
  * expands to exactly the old text. */
 void inputPadHelpFmtFam(char *out, size_t n, const char *tmpl, int fam)
 {
-    static const char *const names[3][6] = {
+    static const char *const names[4][6] = {
         { "A", "B", "X", "Y", "BACK", "START" },
         { "CROSS", "CIRCLE", "SQUARE", "TRIANGLE", "SHARE", "OPTIONS" },
         { "A", "B", "X", "Y", "MINUS", "PLUS" },
+        { "A", "B", "C-LEFT", "C-UP", "CAPTURE", "START" },
     };
     static const char *const keys[6] = { "{A}", "{B}", "{X}", "{Y}", "{BACK}", "{START}" };
-    if (fam < 0 || fam > 2) fam = PADFAM_XBOX;
+    if (fam < 0 || fam > PADFAM_N64) fam = PADFAM_XBOX;
     size_t o = 0;
     if (n == 0) return;
     while (*tmpl && o + 1 < n) {
@@ -3131,6 +3181,17 @@ const char *inputPadSourceFamilyName(int seat, const char *src)
     };
     int fam = inputPadFamily(seat);
     if (fam == PADFAM_XBOX) return NULL;
+    if (fam == PADFAM_N64) {
+        static const struct { const char *src, *label; } n64[] = {
+            { "x", "C-left" }, { "y", "C-up" }, { "start", "Start" },
+            { "leftshoulder", "L" }, { "rightshoulder", "R" },
+            { "lefttrigger", "Z" }, { "righttrigger", "C-down" },
+            { "leftstick", "ZR" },
+        };
+        for (unsigned k = 0; k < sizeof(n64) / sizeof(n64[0]); ++k)
+            if (!strcmp(src, n64[k].src)) return n64[k].label;
+        return NULL;
+    }
     for (size_t k = 0; k < sizeof(t) / sizeof(t[0]); k++)
         if (!strcmp(src, t[k].src)) return fam == PADFAM_PS ? t[k].ps : t[k].nin;
     return NULL;
@@ -3139,7 +3200,14 @@ const char *inputPadSourceFamilyName(int seat, const char *src)
 int inputPadButton(int idx, SDL_GameControllerButton b)
 {
     if (idx < 0 || idx >= MAX_PADS || !pads[idx]) return 0;
+    if (b == SDL_CONTROLLER_BUTTON_BACK && nsoN64IsController(pads[idx]))
+        return nsoN64OptionsHeld(pads[idx]);
     return SDL_GameControllerGetButton(pads[idx], b);
+}
+
+int inputPadIsNsoN64(int seat)
+{
+    return seat >= 0 && seat < MAX_PADS && nsoN64IsController(pads[seat]);
 }
 
 short inputPadAxis(int idx, SDL_GameControllerAxis a)

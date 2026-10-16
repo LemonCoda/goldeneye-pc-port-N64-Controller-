@@ -36,8 +36,9 @@
 #include <inttypes.h>
 #include <excpt.h>
 
-/* D38: MinGW's <windows.h> does not declare this; add it (NT4+ API). */
-extern int GetCurrentThreadStackLimits(PVOID *lpLowAddress, PVOID *lpHighAddress);
+/* Windows 8+ API, also declared here for MinGW headers whose target-version
+ * default hides it. This function has no return value. */
+WINBASEAPI VOID WINAPI GetCurrentThreadStackLimits(PULONG_PTR low, PULONG_PTR high);
 
 static LPTOP_LEVEL_EXCEPTION_FILTER prevExFilter;
 
@@ -91,10 +92,11 @@ static void crashStackTraceRaw(char *msg, PEXCEPTION_POINTERS exinfo)
               (unsigned long)context.MxCsr,
               (unsigned)(context.FloatSave.ControlWord & 0xffff),
               (unsigned)(context.FloatSave.StatusWord & 0xffff));
-    PVOID low = NULL, high = NULL;
-    if (GetCurrentThreadStackLimits(&low, &high)) {
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    if (low < high) {
         CRASH_MSG("thread stack: %p..%p  Rsp=%p  used=%llu bytes\n",
-                  low, high, (void *)context.Rsp,
+                  (void *)low, (void *)high, (void *)context.Rsp,
                   (unsigned long long)((uintptr_t)high - (uintptr_t)context.Rsp));
     }
 #else
@@ -154,8 +156,9 @@ static void crashStackTraceSym(char *msg, PEXCEPTION_POINTERS exinfo)
     DWORD msglen = 0;
 
 #if defined(PLATFORM_X86_64)
-    PVOID low = NULL, high = NULL;
-    if (!GetCurrentThreadStackLimits(&low, &high)) {
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    if (low >= high) {
         snprintf(msg, CRASH_MAX_MSG, "\nBACKTRACE: (no stack limits)\n");
         return;
     }
